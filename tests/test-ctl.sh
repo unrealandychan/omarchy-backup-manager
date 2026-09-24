@@ -79,6 +79,17 @@ print(f'{(t1 - t0)*1000:.1f}ms')
 ")
 echo "PASS (${TIME_OUT})"
 
+# Test 7: Restore command
+echo -n "[Test 7] Testing 1-button 'restore --no-pull'... "
+RESTORE_JSON="$("$CTL" restore --no-pull)"
+echo "$RESTORE_JSON" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+assert data.get('success') is True, 'restore command failed'
+assert 'Dotfiles and system configurations restored' in data.get('message', ''), 'unexpected message'
+"
+echo "PASS"
+
 echo "=========================================="
 echo "All CLI backend tests PASSED!"
 echo "=========================================="

@@ -306,6 +306,56 @@ def backup_now(wait=False):
         }
 
 
+def restore(pull=True):
+    if not os.path.isdir(DOTFILES_DIR):
+        return {"success": False, "error": f"Dotfiles directory {DOTFILES_DIR} not found"}
+
+    restore_script = os.path.join(DOTFILES_DIR, "install.sh")
+    if not os.path.exists(restore_script):
+        restore_script = os.path.join(DOTFILES_DIR, "restore.sh")
+
+    if not os.path.exists(restore_script):
+        return {"success": False, "error": "install.sh or restore.sh not found in ~/dotfiles"}
+
+    pull_note = ""
+    if pull:
+        remote, _, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=DOTFILES_DIR)
+        if remote:
+            branch, _, _ = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=DOTFILES_DIR)
+            branch = branch or "main"
+            p_out, p_err, p_code = run_cmd(["git", "pull", "--rebase", "--autostash", "origin", branch], cwd=DOTFILES_DIR)
+            if p_code != 0:
+                pull_note = f" (Warning: git pull failed: {p_err or p_out})"
+            else:
+                pull_note = " (Pulled latest from GitHub)"
+
+    out, err, code = run_cmd([restore_script], cwd=DOTFILES_DIR)
+    if code != 0:
+        return {
+            "success": False,
+            "error": err or out or "Failed to execute restore script",
+            "message": "Restore failed.",
+        }
+
+    # Reload hyprland if available
+    run_cmd(["hyprctl", "reload"])
+
+    msg = f"Dotfiles and system configurations restored successfully!{pull_note}"
+    run_cmd([
+        "notify-send",
+        "-i", "document-revert",
+        "-a", "Omarchy Backup Manager",
+        "Dotfiles Restored",
+        msg,
+    ])
+
+    return {
+        "success": True,
+        "message": msg,
+        "output": out,
+    }
+
+
 def get_logs(lines=25):
     out, err, _ = run_cmd([
         "journalctl", "--user", "-u", SERVICE_UNIT,
@@ -324,6 +374,10 @@ def main():
     elif cmd in ("backup-now", "--backup-now"):
         wait = "--wait" in args
         res = backup_now(wait=wait)
+        print(json.dumps(res, indent=2))
+    elif cmd in ("restore", "--restore"):
+        pull = "--no-pull" not in args
+        res = restore(pull=pull)
         print(json.dumps(res, indent=2))
     elif cmd in ("set-frequency", "--set-frequency"):
         if len(args) < 2:
@@ -355,6 +409,7 @@ def main():
 Commands:
   status                 Print current backup status, timer state, and git metadata (JSON)
   backup-now [--wait]    Trigger an immediate backup (asynchronous by default, or wait)
+  restore [--no-pull]    1-button restore: pull latest dotfiles & apply system configurations
   set-frequency <FREQ>   Set automated backup frequency: 1h, 2h, 4h, 6h, 12h, daily, disabled
   set-remote <URL>       Update Git remote target URL
   set-branch <BRANCH>    Update Git branch

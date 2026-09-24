@@ -37,9 +37,15 @@ BarWidget {
   // UI state
   property bool popupOpen: false
   readonly property bool isSyncing: statusState === "syncing"
+  property bool isRestoring: false
+  property bool confirmRestoreOpen: false
 
-  // Script path
-  readonly property string ctlPath: "/home/arch/projects/omarchy-backup-manager/bin/omarchy-backup-ctl"
+  // Script path: dynamically resolved relative to plugin location with fallback
+  readonly property string ctlPath: {
+    var resolved = Qt.resolvedUrl("../bin/omarchy-backup-ctl")
+    var localPath = decodeURIComponent(String(resolved).replace(/^file:\/\//, ""))
+    return localPath
+  }
 
   // Omarchy Shell panel contract: opened, open(), close(), toggle()
   readonly property bool opened: popupOpen
@@ -80,10 +86,21 @@ BarWidget {
 
   // Trigger manual backup
   function triggerBackup() {
+    root.confirmRestoreOpen = false
     root.statusState = "syncing"
     root.notificationMessage = "Backup initiated…"
     if (!backupProc.running) {
       backupProc.running = true
+    }
+  }
+
+  // Trigger 1-button restore
+  function triggerRestore() {
+    root.confirmRestoreOpen = false
+    root.isRestoring = true
+    root.notificationMessage = "Restoring dotfiles from repository…"
+    if (!restoreProc.running) {
+      restoreProc.running = true
     }
   }
 
@@ -132,11 +149,12 @@ BarWidget {
   }
 
   // Low-profile display text and styling
-  readonly property string displayIcon: isSyncing ? "󱑎" : "󰁯"
+  readonly property string displayIcon: (isSyncing || isRestoring) ? "󱑎" : "󰁯"
 
   readonly property string displayText: {
     if (root.vertical) return root.displayIcon
     if (isSyncing) return root.displayIcon + " Syncing…"
+    if (isRestoring) return root.displayIcon + " Restoring…"
     if (root.showRelativeTime && root.lastBackupRelative !== "Never" && root.lastBackupRelative !== "...") {
       return root.displayIcon + " " + root.lastBackupRelative
     }
@@ -147,7 +165,7 @@ BarWidget {
   }
 
   readonly property color widgetColor: {
-    if (isSyncing) return Color.accent
+    if (isSyncing || isRestoring) return Color.accent
     if (root.uncommittedChanges > 0 || root.unpushedCommits > 0) return "#f9e2af"
     return Color.foreground
   }
@@ -157,6 +175,8 @@ BarWidget {
     t += "───────────────────────────\n"
     if (isSyncing) {
       t += "Status: Backup in progress…\n"
+    } else if (isRestoring) {
+      t += "Status: Restoring dotfiles…\n"
     } else {
       t += "Status: " + (root.uncommittedChanges > 0 ? "Changes pending" : "Up to date") + "\n"
     }
@@ -176,10 +196,10 @@ BarWidget {
     return t
   }
 
-  // Background polling timer: 60s when idle, 2.5s when syncing (ultra-low CPU)
+  // Background polling timer: 60s when idle, 2.5s when syncing or restoring (ultra-low CPU)
   Timer {
     id: pollTimer
-    interval: root.isSyncing ? 2500 : 60000
+    interval: (root.isSyncing || root.isRestoring) ? 2500 : 60000
     repeat: true
     running: true
     triggeredOnStart: true
@@ -318,6 +338,27 @@ BarWidget {
         } catch(e) {
           root.recentLogs = "Error loading logs."
         }
+      }
+    }
+  }
+
+  // Process 7: 1-Button Restore action
+  Process {
+    id: restoreProc
+    command: [root.ctlPath, "restore"]
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.isRestoring = false
+        root.confirmRestoreOpen = false
+        try {
+          var res = JSON.parse(text.trim())
+          root.notificationMessage = res.message || (res.success ? "Dotfiles restored successfully." : ("Restore failed: " + res.error))
+        } catch(e) {
+          root.notificationMessage = "Restore completed."
+        }
+        root.refreshStatus()
       }
     }
   }
@@ -594,7 +635,7 @@ BarWidget {
         // Primary Action Buttons
         RowLayout {
           Layout.fillWidth: true
-          spacing: Style.space(10)
+          spacing: Style.space(8)
 
           Button {
             Layout.fillWidth: true
@@ -605,18 +646,93 @@ BarWidget {
             bordered: true
             accent: Color.accent
             selected: true
-            enabled: !root.isSyncing
+            enabled: !root.isSyncing && !root.isRestoring
             onClicked: root.triggerBackup()
+          }
+
+          Button {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Style.space(32)
+            Layout.alignment: Qt.AlignVCenter
+            text: root.isRestoring ? "Restoring…" : "Restore"
+            iconText: root.isRestoring ? "󱑎" : "󰁝"
+            bordered: true
+            accent: "#89b4fa"
+            enabled: !root.isSyncing && !root.isRestoring
+            onClicked: {
+              root.confirmRestoreOpen = !root.confirmRestoreOpen
+            }
           }
 
           Button {
             Layout.preferredWidth: implicitWidth
             Layout.preferredHeight: Style.space(32)
             Layout.alignment: Qt.AlignVCenter
-            text: "Open GitHub"
+            text: "GitHub"
             iconText: "󰆏"
             bordered: true
             onClicked: root.openRepository()
+          }
+        }
+
+        // Restore Confirmation Box (1-Click confirmation for safety)
+        Rectangle {
+          visible: root.confirmRestoreOpen
+          Layout.fillWidth: true
+          implicitHeight: restoreConfirmCol.implicitHeight + Style.space(16)
+          radius: Style.space(6)
+          color: Qt.rgba(0.97, 0.7, 0.2, 0.12)
+          border.width: 1
+          border.color: Qt.rgba(0.97, 0.7, 0.2, 0.5)
+
+          ColumnLayout {
+            id: restoreConfirmCol
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Style.space(8)
+            spacing: Style.space(6)
+
+            Text {
+              text: "󰳦 Pull and restore dotfiles to $HOME?"
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              color: "#f9e2af"
+            }
+
+            Text {
+              text: "This pulls latest configs from GitHub and applies all system dotfiles & themes."
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption - 1
+              color: Color.muted
+              wrapMode: Text.WordWrap
+              Layout.fillWidth: true
+            }
+
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(8)
+
+              Button {
+                text: "Confirm Restore"
+                iconText: "󰁝"
+                bordered: true
+                accent: "#a6e3a1"
+                selected: true
+                fontSize: Style.font.caption
+                onClicked: root.triggerRestore()
+              }
+
+              Button {
+                text: "Cancel"
+                bordered: true
+                fontSize: Style.font.caption
+                onClicked: {
+                  root.confirmRestoreOpen = false
+                }
+              }
+            }
           }
         }
 

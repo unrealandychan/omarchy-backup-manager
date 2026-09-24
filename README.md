@@ -1,6 +1,9 @@
 # Omarchy Backup Manager 󰁯
 
-A lightweight, low-profile [Omarchy](https://omarchy.org/) status bar plugin and management suite for automated dotfiles backup, git synchronization, and system configuration snapshots.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: Arch Linux / Omarchy](https://img.shields.io/badge/Platform-Arch%20Linux%20%7C%20Omarchy-1793D1.svg)](https://omarchy.org/)
+
+A lightweight, low-profile [Omarchy](https://omarchy.org/) status bar plugin and management suite for automated dotfiles backup, 1-click system restore, git synchronization, and system configuration snapshots.
 
 ---
 
@@ -11,14 +14,15 @@ A lightweight, low-profile [Omarchy](https://omarchy.org/) status bar plugin and
   - Subtle status indication: idle/up-to-date, syncing animation (`󱑎`), or attention required.
   - Detailed tooltip displaying last backup time, latest commit hash, schedule, and destination.
 - **Interactive Management Panel**:
-  - One-click **"Backup Now"** button with live progress indicator.
+  - **1-Click "Backup Now"**: Immediate backup and push with live progress animation.
+  - **1-Click "Restore"**: One-button system restore pulling the latest configurations from GitHub and updating local configs, theme, and Hyprland without breaking development links. Includes confirmation prompt for safety.
   - **Schedule Settings**: Change automated backup interval anytime via dropdown (`Every 1 hour`, `2 hours`, `4 hours`, `6 hours`, `12 hours`, `Daily`, or `Disabled`). Dynamically reconfigures systemd user timers.
   - **Target Git Destination**: View and update the GitHub / Git remote target URL and branch directly in the GUI.
   - **Recent Commit History**: Inspect recent backup commits with relative timestamps.
   - **Integrated Log Viewer**: View real-time backup systemd service logs.
 - **Ultra-Low CPU & RAM Footprint**:
   - Zero background daemon loops.
-  - Efficient 60-second idle polling (only fast-polls during active syncs).
+  - Efficient 60-second idle polling (only fast-polls during active syncs/restores).
   - Average CPU utilization: `0.00%`.
   - Native QML declarative bindings with zero memory leaks.
 
@@ -26,17 +30,22 @@ A lightweight, low-profile [Omarchy](https://omarchy.org/) status bar plugin and
 
 ## 🚀 Installation
 
-Run the installation script inside this repository:
-
+### One-line Git Clone & Install:
 ```bash
-cd ~/projects/omarchy-backup-manager
+git clone https://github.com/unrealandychan/omarchy-backup-manager.git ~/.local/share/omarchy/plugins/omarchy-backup-manager
+cd ~/.local/share/omarchy/plugins/omarchy-backup-manager
+./install.sh
+```
+
+Or from any local directory:
+```bash
 ./install.sh
 ```
 
 This will:
 1. Symlink `bin/omarchy-backup-ctl` to `~/.local/bin/omarchy-backup-ctl`.
 2. Link the plugin to `~/.config/omarchy/plugins/arch.backup-manager`.
-3. Register the widget in `~/.config/omarchy/shell.json` on the right side of the navigation bar.
+3. Register the widget in `~/.config/omarchy/shell.json` on the navigation bar.
 4. Notify Omarchy Shell to reload plugins automatically.
 
 ---
@@ -53,6 +62,11 @@ omarchy-backup-ctl status
 omarchy-backup-ctl backup-now
 # Or wait for completion:
 omarchy-backup-ctl backup-now --wait
+
+# 1-Button Restore: pull latest dotfiles from GitHub & apply system configurations
+omarchy-backup-ctl restore
+# Or restore without git pull:
+omarchy-backup-ctl restore --no-pull
 
 # Change automated backup schedule
 omarchy-backup-ctl set-frequency 4h     # 1h, 2h, 4h, 6h, 12h, daily, disabled

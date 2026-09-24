@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "arch.backup-manager",
   "name": "Backup Manager",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Eddie Chan",
   "license": "MIT",
-  "description": "Low-profile Omarchy status bar widget to monitor, trigger, and configure automated dotfiles backups and GitHub synchronization with ultra-low CPU and RAM usage.",
+  "description": "Low-profile Omarchy status bar widget to monitor, trigger, 1-click restore, and configure automated dotfiles backups and GitHub synchronization with ultra-low CPU and RAM usage.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Backup Manager",
-    "description": "Dotfiles backup status, manual backup trigger, frequency and destination settings",
+    "description": "Dotfiles backup status, 1-click restore, manual backup trigger, frequency and destination settings",
     "category": "System",
     "defaultSection": "right",
     "allowMultiple": false
