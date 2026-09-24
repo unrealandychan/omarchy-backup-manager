@@ -354,11 +354,14 @@ BarWidget {
         root.popupOpen = open
       }
     }
-    contentWidth: popup.fittedContentWidth(Style.space(420))
+    contentWidth: popup.fittedContentWidth(Style.space(440))
     contentHeight: popup.fittedContentHeight(panelContent.implicitHeight)
 
     FocusScope {
+      id: focusScope
       anchors.fill: parent
+      implicitHeight: panelContent.implicitHeight
+      implicitWidth: panelContent.implicitWidth
       focus: root.popupOpen
       Keys.onEscapePressed: function(event) {
         root.closePopup()
@@ -373,8 +376,10 @@ BarWidget {
 
       ColumnLayout {
         id: panelContent
-        width: parent.width
-        spacing: Style.space(10)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        spacing: Style.space(12)
 
         // ──────────────── Header ────────────────
         RowLayout {
@@ -386,6 +391,7 @@ BarWidget {
             font.family: Style.font.family
             font.pixelSize: Style.font.title
             color: Color.accent
+            Layout.alignment: Qt.AlignVCenter
           }
 
           Text {
@@ -395,6 +401,7 @@ BarWidget {
             font.bold: true
             color: Color.foreground
             Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
           }
 
           // Status Badge Pill
@@ -402,6 +409,7 @@ BarWidget {
             implicitHeight: Style.space(22)
             implicitWidth: statusBadgeText.implicitWidth + Style.space(16)
             radius: Style.space(11)
+            Layout.alignment: Qt.AlignVCenter
             color: root.isSyncing
               ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.2)
               : (root.uncommittedChanges > 0
@@ -433,6 +441,7 @@ BarWidget {
             fontSize: Style.font.caption
             horizontalPadding: Style.space(6)
             verticalPadding: Style.space(4)
+            Layout.alignment: Qt.AlignVCenter
             onClicked: root.refreshStatus()
           }
         }
@@ -440,7 +449,7 @@ BarWidget {
         // Transient notification message banner
         Rectangle {
           Layout.fillWidth: true
-          implicitHeight: notifyMsg.implicitHeight + Style.space(8)
+          implicitHeight: notifyMsg.implicitHeight + Style.space(10)
           visible: root.notificationMessage !== ""
           radius: Style.space(6)
           color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
@@ -461,35 +470,48 @@ BarWidget {
 
         // ──────────────── Overview Card ────────────────
         BorderSurface {
+          id: overviewCard
           Layout.fillWidth: true
+          implicitHeight: overviewCol.implicitHeight + topPadding + bottomPadding
           radius: Style.space(6)
           color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.04)
           border.width: 1
           border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.1)
-          topPadding: Style.space(8)
-          bottomPadding: Style.space(8)
-          leftPadding: Style.space(10)
-          rightPadding: Style.space(10)
+          topPadding: Style.space(10)
+          bottomPadding: Style.space(10)
+          leftPadding: Style.space(12)
+          rightPadding: Style.space(12)
 
           ColumnLayout {
-            width: parent.width
-            spacing: Style.space(5)
+            id: overviewCol
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.leftMargin: parent.leftPadding
+            anchors.rightMargin: parent.rightPadding
+            anchors.topMargin: parent.topPadding
+            spacing: Style.space(6)
 
             // Last backup row
             RowLayout {
               Layout.fillWidth: true
+              spacing: Style.space(8)
               Text {
                 text: "Last Backup:"
                 font.bold: true
                 color: Color.muted
+                font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 Layout.preferredWidth: Style.space(90)
+                Layout.alignment: Qt.AlignVCenter
               }
               Text {
                 text: root.lastBackupTime + (root.lastBackupRelative !== "Never" ? " (" + root.lastBackupRelative + ")" : "")
                 color: Color.foreground
+                font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
                 elide: Text.ElideRight
               }
             }
@@ -498,19 +520,23 @@ BarWidget {
             RowLayout {
               visible: root.lastCommitHash !== ""
               Layout.fillWidth: true
+              spacing: Style.space(8)
               Text {
                 text: "Latest Commit:"
                 font.bold: true
                 color: Color.muted
+                font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 Layout.preferredWidth: Style.space(90)
+                Layout.alignment: Qt.AlignVCenter
               }
               Text {
                 text: root.lastCommitHash + " · " + root.lastCommitSubject
                 color: Color.foreground
-                font.pixelSize: Style.font.caption
                 font.family: Style.font.family
+                font.pixelSize: Style.font.caption
                 Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
                 elide: Text.ElideRight
               }
             }
@@ -518,18 +544,23 @@ BarWidget {
             // Schedule row
             RowLayout {
               Layout.fillWidth: true
+              spacing: Style.space(8)
               Text {
                 text: "Schedule:"
                 font.bold: true
                 color: Color.muted
+                font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 Layout.preferredWidth: Style.space(90)
+                Layout.alignment: Qt.AlignVCenter
               }
               Text {
                 text: root.frequencyLabel + (root.nextTrigger ? "  (Next: " + root.nextTrigger + ")" : "")
                 color: Color.foreground
+                font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
                 elide: Text.ElideRight
               }
             }
@@ -537,18 +568,23 @@ BarWidget {
             // Destination row
             RowLayout {
               Layout.fillWidth: true
+              spacing: Style.space(8)
               Text {
                 text: "Destination:"
                 font.bold: true
                 color: Color.muted
+                font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 Layout.preferredWidth: Style.space(90)
+                Layout.alignment: Qt.AlignVCenter
               }
               Text {
                 text: (root.remoteDisplay || root.remoteUrl || "Not configured") + " [" + root.branch + "]"
                 color: Color.foreground
+                font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
                 elide: Text.ElideRight
               }
             }
@@ -558,10 +594,12 @@ BarWidget {
         // Primary Action Buttons
         RowLayout {
           Layout.fillWidth: true
-          spacing: Style.space(8)
+          spacing: Style.space(10)
 
           Button {
             Layout.fillWidth: true
+            Layout.preferredHeight: Style.space(32)
+            Layout.alignment: Qt.AlignVCenter
             text: root.isSyncing ? "Backing up…" : "Backup Now"
             iconText: root.isSyncing ? "󱑎" : "󰁯"
             bordered: true
@@ -572,6 +610,9 @@ BarWidget {
           }
 
           Button {
+            Layout.preferredWidth: implicitWidth
+            Layout.preferredHeight: Style.space(32)
+            Layout.alignment: Qt.AlignVCenter
             text: "Open GitHub"
             iconText: "󰆏"
             bordered: true
@@ -598,11 +639,13 @@ BarWidget {
             font.bold: true
             color: Color.foreground
             Layout.preferredWidth: Style.space(90)
+            Layout.alignment: Qt.AlignVCenter
           }
 
           Dropdown {
             id: freqDropdown
             Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
             showLabel: false
             value: root.frequency
             options: [
@@ -632,11 +675,13 @@ BarWidget {
             font.bold: true
             color: Color.foreground
             Layout.preferredWidth: Style.space(90)
+            Layout.alignment: Qt.AlignVCenter
           }
 
           TextField {
             id: remoteInput
             Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
             text: root.remoteUrl
             placeholderText: "https://github.com/user/dotfiles.git"
             onAccepted: root.updateRemote(text)
@@ -644,6 +689,7 @@ BarWidget {
 
           Button {
             text: "Save"
+            Layout.alignment: Qt.AlignVCenter
             fontSize: Style.font.caption
             bordered: true
             onClicked: root.updateRemote(remoteInput.text)
@@ -662,11 +708,13 @@ BarWidget {
             font.bold: true
             color: Color.foreground
             Layout.preferredWidth: Style.space(90)
+            Layout.alignment: Qt.AlignVCenter
           }
 
           TextField {
             id: branchInput
             Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
             text: root.branch
             placeholderText: "main"
             onAccepted: root.updateBranch(text)
@@ -674,6 +722,7 @@ BarWidget {
 
           Button {
             text: "Save"
+            Layout.alignment: Qt.AlignVCenter
             fontSize: Style.font.caption
             bordered: true
             onClicked: root.updateBranch(branchInput.text)
@@ -689,24 +738,29 @@ BarWidget {
 
         ColumnLayout {
           Layout.fillWidth: true
-          spacing: Style.space(4)
+          spacing: Style.space(6)
 
           Repeater {
             model: root.historyList
             delegate: Rectangle {
               Layout.fillWidth: true
-              implicitHeight: historyCol.implicitHeight + Style.space(6)
+              implicitHeight: historyCol.implicitHeight + Style.space(12)
               color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.04)
               radius: Style.space(4)
+              border.width: 1
+              border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
 
               ColumnLayout {
                 id: historyCol
-                anchors.fill: parent
-                anchors.margins: Style.space(4)
-                spacing: 1
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: Style.space(6)
+                spacing: Style.space(2)
 
                 RowLayout {
                   Layout.fillWidth: true
+                  spacing: Style.space(6)
                   Text {
                     text: modelData.hash || ""
                     font.family: Style.font.family
@@ -734,7 +788,7 @@ BarWidget {
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
                   color: Color.foreground
-                  elide: Text.ElideRight
+                  wrapMode: Text.WordWrap
                 }
               }
             }
@@ -754,6 +808,8 @@ BarWidget {
           Layout.fillWidth: true
           Button {
             Layout.fillWidth: true
+            Layout.preferredHeight: Style.space(28)
+            Layout.alignment: Qt.AlignVCenter
             text: root.showLogsPanel ? "Hide Backup Logs" : "View Recent Backup Logs"
             iconText: "󰌒"
             fontSize: Style.font.caption
@@ -777,6 +833,7 @@ BarWidget {
             font.family: "monospace"
             font.pixelSize: Style.font.caption
             color: Color.foreground
+            wrapMode: Text.WrapAnywhere
             background: Rectangle {
               color: Qt.rgba(0, 0, 0, 0.4)
               radius: Style.space(4)
