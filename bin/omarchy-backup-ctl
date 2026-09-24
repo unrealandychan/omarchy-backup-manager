@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+"""
+omarchy-backup-ctl - Control and inspect dotfiles backup and synchronization
+"""
+
+import sys
+import os
+import json
+import subprocess
+import re
+from datetime import datetime, timezone
+
+DOTFILES_DIR = os.path.expanduser("~/dotfiles")
+TIMER_UNIT = "omarchy-dotfiles-backup.timer"
+SERVICE_UNIT = "omarchy-dotfiles-backup.service"
+USER_SYSTEMD_DIR = os.path.expanduser("~/.config/systemd/user")
+TIMER_FILE = os.path.join(USER_SYSTEMD_DIR, TIMER_UNIT)
+DOTFILES_TIMER_FILE = os.path.join(DOTFILES_DIR, ".config/systemd/user", TIMER_UNIT)
+
+FREQUENCY_MAP = {
+    "1h": ("*-*-* *:00:00", "Every 1 hour"),
+    "2h": ("*-*-* 00/2:00:00", "Every 2 hours"),
+    "4h": ("*-*-* 00/4:00:00", "Every 4 hours"),
+    "6h": ("*-*-* 00/6:00:00", "Every 6 hours"),
+    "12h": ("*-*-* 00/12:00:00", "Every 12 hours"),
+    "daily": ("*-*-* 00:00:00", "Daily at midnight"),
+    "disabled": (None, "Manual only (Disabled)"),
+}
+
+CALENDAR_TO_FREQ = {
+    "*-*-* *:00:00": "1h",
+    "*-*-* 00/2:00:00": "2h",
+    "*-*-* 00/4:00:00": "4h",
+    "*-*-* 00/6:00:00": "6h",
+    "*-*-* 00/12:00:00": "12h",
+    "*-*-* 00:00:00": "daily",
+    "daily": "daily",
+}
+
+
+def run_cmd(args, cwd=None, check=False):
+    try:
+        res = subprocess.run(
+            args,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=check,
+        )
+        return res.stdout.strip(), res.stderr.strip(), res.returncode
+    except Exception as e:
+        return "", str(e), 1
+
+
+def calculate_relative_time(epoch_time):
+    now = datetime.now().timestamp()
+    diff = int(now - epoch_time)
+    if diff < 0:
+        return "just now"
+    if diff < 60:
+        return f"{diff}s ago"
+    minutes = diff // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    if days == 1:
+        return "yesterday"
+    if days < 30:
+        return f"{days}d ago"
+    months = days // 30
+    return f"{months}mo ago"
+
+
+def get_current_frequency():
+    if not os.path.exists(TIMER_FILE):
+        return "4h", FREQUENCY_MAP["4h"][1]
+    
+    # Check if timer is active
+    out, _, code = run_cmd(["systemctl", "--user", "is-active", TIMER_UNIT])
+    if out != "active":
+        return "disabled", FREQUENCY_MAP["disabled"][1]
+
+    try:
+        with open(TIMER_FILE, "r") as f:
+            content = f.read()
+        match = re.search(r"OnCalendar=(.+)", content)
+        if match:
+            cal = match.group(1).strip()
+            freq = CALENDAR_TO_FREQ.get(cal, "custom")
+            label = FREQUENCY_MAP.get(freq, (None, f"Custom ({cal})"))[1]
+            return freq, label
+    except Exception:
+        pass
+    return "4h", FREQUENCY_MAP["4h"][1]
+
+
+def get_status():
+    status_data = {
+        "status": "idle",
+        "last_backup_time": "Never",
+        "last_backup_relative": "Never",
+        "last_commit_hash": "",
+        "last_commit_subject": "",
+        "timer_active": False,
+        "frequency": "4h",
+        "frequency_label": "Every 4 hours",
+        "next_trigger": "",
+        "remote_url": "",
+        "remote_display": "",
+        "branch": "main",
+        "uncommitted_changes": 0,
+        "unpushed_commits": 0,
+        "history": [],
+    }
+
+    # Check if service is currently running
+    srv_out, _, _ = run_cmd(["systemctl", "--user", "is-active", SERVICE_UNIT])
+    if srv_out in ("activating", "active"):
+        status_data["status"] = "syncing"
+
+    # Git details in ~/dotfiles
+    if os.path.isdir(DOTFILES_DIR):
+        # Branch
+        branch, _, _ = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=DOTFILES_DIR)
+        if branch:
+            status_data["branch"] = branch
+
+        # Remote URL
+        remote, _, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=DOTFILES_DIR)
+        status_data["remote_url"] = remote
+        if remote:
+            # Short display: e.g., unrealandychan/omarchy-dotfiles
+            clean_remote = re.sub(r"^(https?://[^/]+/|git@[^:]+:)", "", remote)
+            clean_remote = re.sub(r"\.git$", "", clean_remote)
+            status_data["remote_display"] = clean_remote
+
+        # Last commit
+        last_commit, _, _ = run_cmd(
+            ["git", "log", "-1", "--format=%h|%ct|%s"],
+            cwd=DOTFILES_DIR,
+        )
+        if last_commit:
+            parts = last_commit.split("|", 2)
+            if len(parts) == 3:
+                h, ts, subj = parts
+                status_data["last_commit_hash"] = h
+                epoch = int(ts)
+                dt = datetime.fromtimestamp(epoch)
+                status_data["last_backup_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                status_data["last_backup_relative"] = calculate_relative_time(epoch)
+                status_data["last_commit_subject"] = subj
+
+        # Uncommitted changes
+        st_out, _, _ = run_cmd(["git", "status", "--porcelain"], cwd=DOTFILES_DIR)
+        if st_out:
+            status_data["uncommitted_changes"] = len([l for l in st_out.split("\n") if l.strip()])
+
+        # Unpushed commits
+        if branch and remote:
+            unpushed, _, _ = run_cmd(
+                ["git", "log", f"origin/{branch}..{branch}", "--oneline"],
+                cwd=DOTFILES_DIR,
+            )
+            if unpushed:
+                status_data["unpushed_commits"] = len([l for l in unpushed.split("\n") if l.strip()])
+
+        # History (last 5 commits)
+        hist_out, _, _ = run_cmd(
+            ["git", "log", "-5", "--format=%h|%ct|%s"],
+            cwd=DOTFILES_DIR,
+        )
+        if hist_out:
+            for line in hist_out.split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.split("|", 2)
+                if len(parts) == 3:
+                    h, ts, subj = parts
+                    ep = int(ts)
+                    status_data["history"].append({
+                        "hash": h,
+                        "relative": calculate_relative_time(ep),
+                        "date": datetime.fromtimestamp(ep).strftime("%Y-%m-%d %H:%M"),
+                        "subject": subj,
+                    })
+
+    # Systemd timer details
+    timer_active, _, _ = run_cmd(["systemctl", "--user", "is-active", TIMER_UNIT])
+    status_data["timer_active"] = (timer_active == "active")
+    freq, freq_label = get_current_frequency()
+    status_data["frequency"] = freq
+    status_data["frequency_label"] = freq_label
+
+    if status_data["timer_active"]:
+        show_out, _, _ = run_cmd([
+            "systemctl", "--user", "show", TIMER_UNIT,
+            "--property=NextElapseUSecRealtime,TimersCalendar",
+        ])
+        for line in show_out.split("\n"):
+            if line.startswith("NextElapseUSecRealtime="):
+                val = line.split("=", 1)[1].strip()
+                if val:
+                    status_data["next_trigger"] = val
+
+    return status_data
+
+
+def set_frequency(freq):
+    if freq not in FREQUENCY_MAP:
+        return {
+            "success": False,
+            "error": f"Invalid frequency '{freq}'. Options: {', '.join(FREQUENCY_MAP.keys())}",
+        }
+
+    cal_spec, label = FREQUENCY_MAP[freq]
+
+    if freq == "disabled":
+        run_cmd(["systemctl", "--user", "stop", TIMER_UNIT])
+        run_cmd(["systemctl", "--user", "disable", TIMER_UNIT])
+        return {
+            "success": True,
+            "frequency": "disabled",
+            "message": "Automated backup disabled.",
+        }
+
+    timer_content = f"""[Unit]
+Description=Periodic automated dotfiles backup to GitHub
+Documentation=https://github.com/unrealandychan/omarchy-dotfiles
+
+[Timer]
+OnBootSec=10min
+OnCalendar={cal_spec}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    os.makedirs(USER_SYSTEMD_DIR, exist_ok=True)
+    with open(TIMER_FILE, "w") as f:
+        f.write(timer_content)
+
+    # Sync to dotfiles repo as well
+    if os.path.isdir(os.path.dirname(DOTFILES_TIMER_FILE)):
+        with open(DOTFILES_TIMER_FILE, "w") as f:
+            f.write(timer_content)
+
+    run_cmd(["systemctl", "--user", "daemon-reload"])
+    run_cmd(["systemctl", "--user", "enable", "--now", TIMER_UNIT])
+
+    return {
+        "success": True,
+        "frequency": freq,
+        "frequency_label": label,
+        "message": f"Backup frequency updated to {label}.",
+    }
+
+
+def set_remote(url):
+    url = url.strip()
+    if not url:
+        return {"success": False, "error": "Remote URL cannot be empty."}
+    
+    out, err, code = run_cmd(["git", "remote", "set-url", "origin", url], cwd=DOTFILES_DIR)
+    if code != 0:
+        return {"success": False, "error": err or "Failed to set git remote."}
+
+    return {"success": True, "remote_url": url, "message": f"Git remote URL updated to {url}"}
+
+
+def set_branch(branch):
+    branch = branch.strip()
+    if not branch:
+        return {"success": False, "error": "Branch cannot be empty."}
+
+    out, err, code = run_cmd(["git", "checkout", branch], cwd=DOTFILES_DIR)
+    if code != 0:
+        return {"success": False, "error": err or f"Failed to checkout branch {branch}"}
+
+    return {"success": True, "branch": branch, "message": f"Switched branch to {branch}"}
+
+
+def backup_now(wait=False):
+    sync_script = os.path.join(DOTFILES_DIR, "sync.sh")
+    if not os.path.exists(sync_script):
+        return {"success": False, "error": "sync.sh not found in ~/dotfiles"}
+
+    if wait:
+        out, err, code = run_cmd([sync_script], cwd=DOTFILES_DIR)
+        return {
+            "success": (code == 0),
+            "output": out,
+            "error": err if code != 0 else "",
+            "message": "Backup completed successfully." if code == 0 else "Backup failed.",
+        }
+    else:
+        # Start via systemd service
+        out, err, code = run_cmd(["systemctl", "--user", "start", SERVICE_UNIT])
+        return {
+            "success": (code == 0),
+            "message": "Backup started in background via systemd service.",
+            "error": err if code != 0 else "",
+        }
+
+
+def get_logs(lines=25):
+    out, err, _ = run_cmd([
+        "journalctl", "--user", "-u", SERVICE_UNIT,
+        "-n", str(lines), "--no-pager"
+    ])
+    return {"success": True, "logs": out}
+
+
+def main():
+    args = sys.argv[1:]
+    cmd = args[0] if args else "status"
+
+    if cmd in ("status", "--status"):
+        res = get_status()
+        print(json.dumps(res, indent=2))
+    elif cmd in ("backup-now", "--backup-now"):
+        wait = "--wait" in args
+        res = backup_now(wait=wait)
+        print(json.dumps(res, indent=2))
+    elif cmd in ("set-frequency", "--set-frequency"):
+        if len(args) < 2:
+            print(json.dumps({"success": False, "error": "Missing frequency value."}))
+            sys.exit(1)
+        res = set_frequency(args[1])
+        print(json.dumps(res, indent=2))
+    elif cmd in ("set-remote", "--set-remote"):
+        if len(args) < 2:
+            print(json.dumps({"success": False, "error": "Missing remote URL."}))
+            sys.exit(1)
+        res = set_remote(args[1])
+        print(json.dumps(res, indent=2))
+    elif cmd in ("set-branch", "--set-branch"):
+        if len(args) < 2:
+            print(json.dumps({"success": False, "error": "Missing branch name."}))
+            sys.exit(1)
+        res = set_branch(args[1])
+        print(json.dumps(res, indent=2))
+    elif cmd in ("logs", "--logs"):
+        n = 25
+        if len(args) > 1 and args[1].isdigit():
+            n = int(args[1])
+        res = get_logs(n)
+        print(json.dumps(res, indent=2))
+    elif cmd in ("help", "--help", "-h"):
+        print("""omarchy-backup-ctl [COMMAND]
+
+Commands:
+  status                 Print current backup status, timer state, and git metadata (JSON)
+  backup-now [--wait]    Trigger an immediate backup (asynchronous by default, or wait)
+  set-frequency <FREQ>   Set automated backup frequency: 1h, 2h, 4h, 6h, 12h, daily, disabled
+  set-remote <URL>       Update Git remote target URL
+  set-branch <BRANCH>    Update Git branch
+  logs [N]               Get recent N backup log lines
+""")
+    else:
+        print(json.dumps({"success": False, "error": f"Unknown command: {cmd}"}))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
