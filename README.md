@@ -28,9 +28,23 @@ A lightweight, low-profile [Omarchy](https://omarchy.org/) status bar plugin and
 
 ---
 
+## 📦 Dependencies
+
+- **Python 3** (>= 3.8, included by default in Omarchy / Arch Linux)
+- **Git** (for version tracking, commit history, and remote GitHub synchronization)
+- **systemd** (user services & timers: `omarchy-dotfiles-backup.{timer,service}`)
+- **Omarchy Shell / Quickshell** (status bar widget host)
+
+---
+
 ## 🚀 Installation
 
-### One-line Git Clone & Install:
+### Via Omarchy Plugin Manager (Recommended):
+```bash
+omarchy plugin add https://github.com/unrealandychan/omarchy-backup-manager.git --enable
+```
+
+### Manual Installation via Git:
 ```bash
 git clone https://github.com/unrealandychan/omarchy-backup-manager.git ~/.local/share/omarchy/plugins/omarchy-backup-manager
 cd ~/.local/share/omarchy/plugins/omarchy-backup-manager

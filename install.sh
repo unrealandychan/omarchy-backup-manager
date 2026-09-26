@@ -16,11 +16,48 @@ chmod +x "$BIN_SRC"
 ln -nsf "$BIN_SRC" "$BIN_DEST"
 echo "✓ Symlinked CLI tool to $BIN_DEST"
 
-# 2. Link plugin to Omarchy plugins directory
+# 2. Safely link plugin to Omarchy plugins directory
 mkdir -p "$(dirname "$PLUGIN_DEST")"
-rm -rf "$PLUGIN_DEST"
-ln -sfn "$PLUGIN_SRC" "$PLUGIN_DEST"
-echo "✓ Symlinked plugin to $PLUGIN_DEST"
+
+CANONICAL_SRC="$(cd "$PLUGIN_SRC" && pwd -P)"
+CURRENT_UID="$(id -u)"
+
+# Verify ownership of destination if it exists or is a symlink
+if [ -e "$PLUGIN_DEST" ] || [ -L "$PLUGIN_DEST" ]; then
+  DEST_UID="$(stat -c %u "$PLUGIN_DEST" 2>/dev/null || true)"
+  if [ -n "$DEST_UID" ] && [ "$DEST_UID" -ne "$CURRENT_UID" ]; then
+    echo "Error: $PLUGIN_DEST is owned by UID $DEST_UID, not current user UID $CURRENT_UID. Refusing to modify." >&2
+    exit 1
+  fi
+fi
+
+if [ -L "$PLUGIN_DEST" ]; then
+  CANONICAL_DEST="$(realpath "$PLUGIN_DEST" 2>/dev/null || true)"
+  if [ "$CANONICAL_DEST" = "$CANONICAL_SRC" ]; then
+    echo "✓ Plugin symlink at $PLUGIN_DEST already points to $PLUGIN_SRC"
+  else
+    echo "✓ Updating plugin symlink at $PLUGIN_DEST..."
+    ln -sfn "$PLUGIN_SRC" "$PLUGIN_DEST"
+  fi
+elif [ -d "$PLUGIN_DEST" ]; then
+  CANONICAL_DEST="$(cd "$PLUGIN_DEST" && pwd -P)"
+  if [ "$CANONICAL_DEST" = "$CANONICAL_SRC" ]; then
+    echo "✓ Running from destination directory ($PLUGIN_DEST); preserving source."
+  else
+    BACKUP_BASE="${PLUGIN_DEST}.bak.$(date +%s)"
+    echo "==> Preserving existing plugin checkout: moving $PLUGIN_DEST to $BACKUP_BASE..."
+    mv "$PLUGIN_DEST" "$BACKUP_BASE"
+    ln -sfn "$PLUGIN_SRC" "$PLUGIN_DEST"
+  fi
+elif [ -e "$PLUGIN_DEST" ]; then
+  BACKUP_BASE="${PLUGIN_DEST}.bak.$(date +%s)"
+  echo "==> Preserving existing file at $PLUGIN_DEST: moving to $BACKUP_BASE..."
+  mv "$PLUGIN_DEST" "$BACKUP_BASE"
+  ln -sfn "$PLUGIN_SRC" "$PLUGIN_DEST"
+else
+  echo "✓ Linking plugin to $PLUGIN_DEST..."
+  ln -sfn "$PLUGIN_SRC" "$PLUGIN_DEST"
+fi
 
 # 3. Add to shell.json if not present
 if [ -f "$SHELL_CONFIG" ]; then
