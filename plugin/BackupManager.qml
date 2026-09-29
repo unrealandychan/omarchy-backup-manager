@@ -99,6 +99,11 @@ BarWidget {
     root.confirmRestoreOpen = false
     root.isRestoring = true
     root.notificationMessage = "Restoring dotfiles from repository…"
+    if (root.lastCommitHash) {
+      restoreProc.command = [root.ctlPath, "restore", "--confirm-commit", root.lastCommitHash]
+    } else {
+      restoreProc.command = [root.ctlPath, "restore", "--no-pull"]
+    }
     if (!restoreProc.running) {
       restoreProc.running = true
     }
@@ -140,10 +145,11 @@ BarWidget {
         url = url.replace("git@github.com:", "https://github.com/")
       }
       url = url.replace(/\.git$/, "")
-      if (root.bar) {
-        root.bar.run("xdg-open " + url)
-      } else {
+      var urlPattern = /^https?:\/\/[a-zA-Z0-9\-._~:\/?#\[\]@!$&'()*+,;%=]+$/
+      if (urlPattern.test(url)) {
         Quickshell.execDetached(["xdg-open", url])
+      } else {
+        console.warn("[BackupManager] Refusing to open invalid or untrusted URL: " + url)
       }
     }
   }
@@ -694,7 +700,7 @@ BarWidget {
             spacing: Style.space(6)
 
             Text {
-              text: "󰳦 Pull and restore dotfiles to $HOME?"
+              text: "󰳦 Confirm Dotfiles Restore"
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -702,7 +708,7 @@ BarWidget {
             }
 
             Text {
-              text: "This pulls latest configs from GitHub and applies all system dotfiles & themes."
+              text: (root.lastCommitHash ? ("Target commit: " + root.lastCommitHash + (root.lastCommitSubject ? (" — " + root.lastCommitSubject) : "")) : "Applying verified local repository configuration") + "\nExecuting verified ~/dotfiles/install.sh (or restore.sh)"
               font.family: Style.font.family
               font.pixelSize: Style.font.caption - 1
               color: Color.muted

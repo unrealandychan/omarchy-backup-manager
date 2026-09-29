@@ -103,8 +103,12 @@ else
 fi
 
 # 3. Add to shell.json if not present
-if [ -f "$SHELL_CONFIG" ]; then
+if [ -e "$SHELL_CONFIG" ] || [ -L "$SHELL_CONFIG" ]; then
   check_ownership "$SHELL_CONFIG"
+  if [ -L "$SHELL_CONFIG" ]; then
+    echo "Error: $SHELL_CONFIG is a symlink. Refusing to modify." >&2
+    exit 1
+  fi
   if grep -q "arch.backup-manager" "$SHELL_CONFIG"; then
     echo "✓ arch.backup-manager is already present in shell.json"
   else
@@ -112,10 +116,18 @@ if [ -f "$SHELL_CONFIG" ]; then
     BACKUP="$(get_unused_backup_path "$SHELL_CONFIG")"
     echo "==> Backing up $SHELL_CONFIG to $BACKUP..."
     cp "$SHELL_CONFIG" "$BACKUP"
-    python3 -c "
-import json
-with open('$SHELL_CONFIG', 'r') as f:
+    SHELL_CONFIG="$SHELL_CONFIG" python3 -c "
+import json, os, tempfile
+
+config_path = os.environ['SHELL_CONFIG']
+dirname = os.path.dirname(config_path)
+if os.path.islink(config_path):
+    raise RuntimeError('Refusing to modify symlinked shell.json')
+
+fd = os.open(config_path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+with os.fdopen(fd, 'r') as f:
     cfg = json.load(f)
+
 right = cfg.get('bar', {}).get('layout', {}).get('right', [])
 idx = 1
 for i, w in enumerate(right):
@@ -123,8 +135,23 @@ for i, w in enumerate(right):
         idx = i
         break
 right.insert(idx, {'id': 'arch.backup-manager'})
-with open('$SHELL_CONFIG', 'w') as f:
-    json.dump(cfg, f, indent=2)
+
+temp_path = None
+try:
+    with tempfile.NamedTemporaryFile('w', dir=dirname, delete=False) as tf:
+        temp_path = tf.name
+        json.dump(cfg, tf, indent=2)
+        tf.flush()
+        os.fsync(tf.fileno())
+    os.chmod(temp_path, 0o644)
+    os.replace(temp_path, config_path)
+    temp_path = None
+finally:
+    if temp_path and os.path.exists(temp_path):
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
 "
     echo "✓ Added arch.backup-manager to shell.json"
   fi

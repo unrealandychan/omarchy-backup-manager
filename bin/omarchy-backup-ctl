@@ -82,19 +82,29 @@ def write_file_safely(filepath, content, mode=0o644):
                 pass
 
 
-def run_cmd(args, cwd=None, check=False):
+MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB cap to prevent memory exhaustion
+
+
+def run_cmd(args, cwd=None, check=False, timeout=15):
     try:
-        res = subprocess.run(
+        proc = subprocess.Popen(
             args,
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            check=check,
         )
-        return res.stdout.strip(), res.stderr.strip(), res.returncode
+        try:
+            raw_out, raw_err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            raw_out, raw_err = proc.communicate()
+            return "", "Command timed out", 124
+
+        out = (raw_out[:MAX_OUTPUT_BYTES] if raw_out else b"").decode("utf-8", errors="replace").strip()
+        err = (raw_err[:MAX_OUTPUT_BYTES] if raw_err else b"").decode("utf-8", errors="replace").strip()
+        return out, err, proc.returncode
     except Exception as e:
-        return "", str(e), 1
+        return "", str(e)[:1024], 1
 
 
 def calculate_relative_time(epoch_time):
@@ -354,19 +364,43 @@ def backup_now(wait=False):
         }
 
 
-def restore(pull=True):
+def restore(pull=True, expected_commit=None, no_pull=False):
     if not os.path.isdir(DOTFILES_DIR):
         return {"success": False, "error": f"Dotfiles directory {DOTFILES_DIR} not found"}
 
-    restore_script = os.path.join(DOTFILES_DIR, "install.sh")
-    if not os.path.exists(restore_script):
-        restore_script = os.path.join(DOTFILES_DIR, "restore.sh")
+    if os.path.islink(DOTFILES_DIR):
+        return {"success": False, "error": f"Dotfiles directory {DOTFILES_DIR} cannot be a symlink"}
 
-    if not os.path.exists(restore_script):
-        return {"success": False, "error": "install.sh or restore.sh not found in ~/dotfiles"}
+    dir_stat = os.stat(DOTFILES_DIR)
+    if dir_stat.st_uid != os.getuid():
+        return {"success": False, "error": f"Dotfiles directory {DOTFILES_DIR} is owned by UID {dir_stat.st_uid}, not {os.getuid()}"}
+
+    # Locate restore script
+    restore_script = None
+    for candidate in ("install.sh", "restore.sh"):
+        p = os.path.join(DOTFILES_DIR, candidate)
+        if os.path.exists(p):
+            restore_script = p
+            break
+
+    if not restore_script:
+        return {"success": False, "error": "Neither install.sh nor restore.sh found in ~/dotfiles"}
+
+    # Bind and verify executable content
+    if os.path.islink(restore_script):
+        return {"success": False, "error": f"Restore script {restore_script} cannot be a symlink"}
+
+    script_stat = os.lstat(restore_script)
+    if script_stat.st_uid != os.getuid():
+        return {"success": False, "error": f"Restore script {restore_script} is owned by UID {script_stat.st_uid}, not {os.getuid()}"}
+
+    # Verify script is tracked in git repository
+    _, _, code = run_cmd(["git", "ls-files", "--error-unmatch", os.path.basename(restore_script)], cwd=DOTFILES_DIR)
+    if code != 0:
+        return {"success": False, "error": f"Restore script {os.path.basename(restore_script)} is not tracked in git repository"}
 
     pull_note = ""
-    if pull:
+    if pull and not no_pull:
         remote, _, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=DOTFILES_DIR)
         if remote:
             branch, _, _ = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=DOTFILES_DIR)
@@ -376,6 +410,17 @@ def restore(pull=True):
                 pull_note = f" (Warning: git pull failed: {p_err or p_out})"
             else:
                 pull_note = " (Pulled latest from GitHub)"
+
+    # Verify current commit
+    current_head, _, _ = run_cmd(["git", "rev-parse", "HEAD"], cwd=DOTFILES_DIR)
+    current_head_short, _, _ = run_cmd(["git", "rev-parse", "--short", "HEAD"], cwd=DOTFILES_DIR)
+    if expected_commit:
+        expected_commit = expected_commit.strip()
+        if not (current_head.startswith(expected_commit) or expected_commit.startswith(current_head_short)):
+            return {
+                "success": False,
+                "error": f"Commit verification failed: target HEAD is {current_head_short}, but expected {expected_commit}. Aborting restore for safety.",
+            }
 
     out, err, code = run_cmd([restore_script], cwd=DOTFILES_DIR)
     if code != 0:
@@ -388,7 +433,7 @@ def restore(pull=True):
     # Reload hyprland if available
     run_cmd(["hyprctl", "reload"])
 
-    msg = f"Dotfiles and system configurations restored successfully!{pull_note}"
+    msg = f"Dotfiles and system configurations restored successfully! (Commit {current_head_short}){pull_note}"
     run_cmd([
         "notify-send",
         "-i", "document-revert",
@@ -400,6 +445,7 @@ def restore(pull=True):
     return {
         "success": True,
         "message": msg,
+        "commit": current_head_short,
         "output": out,
     }
 
@@ -424,8 +470,14 @@ def main():
         res = backup_now(wait=wait)
         print(json.dumps(res, indent=2))
     elif cmd in ("restore", "--restore"):
-        pull = "--no-pull" not in args
-        res = restore(pull=pull)
+        no_pull = "--no-pull" in args
+        pull = not no_pull
+        expected_commit = None
+        for i, a in enumerate(args):
+            if a in ("--commit", "--confirm-commit") and i + 1 < len(args):
+                expected_commit = args[i + 1]
+                break
+        res = restore(pull=pull, expected_commit=expected_commit, no_pull=no_pull)
         print(json.dumps(res, indent=2))
     elif cmd in ("set-frequency", "--set-frequency"):
         if len(args) < 2:
