@@ -470,6 +470,7 @@ BarWidget {
             Text {
               id: statusBadgeText
               anchors.centerIn: parent
+              textFormat: Text.PlainText
               text: root.isSyncing
                 ? "󱑎 Syncing…"
                 : (root.uncommittedChanges > 0 ? "● Pending changes" : "● Up to date")
@@ -506,6 +507,7 @@ BarWidget {
           Text {
             id: notifyMsg
             anchors.centerIn: parent
+            textFormat: Text.PlainText
             text: root.notificationMessage
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
@@ -554,6 +556,7 @@ BarWidget {
               }
               Text {
                 text: root.lastBackupTime + (root.lastBackupRelative !== "Never" ? " (" + root.lastBackupRelative + ")" : "")
+                textFormat: Text.PlainText
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
@@ -579,6 +582,7 @@ BarWidget {
               }
               Text {
                 text: root.lastCommitHash + " · " + root.lastCommitSubject
+                textFormat: Text.PlainText
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
@@ -603,6 +607,7 @@ BarWidget {
               }
               Text {
                 text: root.frequencyLabel + (root.nextTrigger ? "  (Next: " + root.nextTrigger + ")" : "")
+                textFormat: Text.PlainText
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
@@ -627,6 +632,7 @@ BarWidget {
               }
               Text {
                 text: (root.remoteDisplay || root.remoteUrl || "Not configured") + " [" + root.branch + "]"
+                textFormat: Text.PlainText
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
@@ -709,6 +715,7 @@ BarWidget {
 
             Text {
               text: (root.lastCommitHash ? ("Target commit: " + root.lastCommitHash + (root.lastCommitSubject ? (" — " + root.lastCommitSubject) : "")) : "Applying verified local repository configuration") + "\nExecuting verified ~/dotfiles/install.sh (or restore.sh)"
+              textFormat: Text.PlainText
               font.family: Style.font.family
               font.pixelSize: Style.font.caption - 1
               color: Color.muted
@@ -885,6 +892,7 @@ BarWidget {
                   spacing: Style.space(6)
                   Text {
                     text: modelData.hash || ""
+                    textFormat: Text.PlainText
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption
                     font.bold: true
@@ -897,6 +905,7 @@ BarWidget {
                   }
                   Text {
                     text: modelData.relative || modelData.date || ""
+                    textFormat: Text.PlainText
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption
                     color: Color.muted
@@ -907,6 +916,7 @@ BarWidget {
                 Text {
                   Layout.fillWidth: true
                   text: modelData.subject || ""
+                  textFormat: Text.PlainText
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
                   color: Color.foreground
@@ -951,6 +961,7 @@ BarWidget {
 
           TextArea {
             text: root.recentLogs || "Loading logs…"
+            textFormat: Text.PlainText
             readOnly: true
             font.family: "monospace"
             font.pixelSize: Style.font.caption
