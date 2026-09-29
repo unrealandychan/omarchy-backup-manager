@@ -8,6 +8,8 @@ import os
 import json
 import subprocess
 import re
+import selectors
+import time
 from datetime import datetime, timezone
 
 DOTFILES_DIR = os.path.expanduser("~/dotfiles")
@@ -82,7 +84,7 @@ def write_file_safely(filepath, content, mode=0o644):
                 pass
 
 
-MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB cap to prevent memory exhaustion
+MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB cap enforced while reading child pipes
 
 
 def run_cmd(args, cwd=None, check=False, timeout=15):
@@ -93,18 +95,66 @@ def run_cmd(args, cwd=None, check=False, timeout=15):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        try:
-            raw_out, raw_err = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            raw_out, raw_err = proc.communicate()
-            return "", "Command timed out", 124
-
-        out = (raw_out[:MAX_OUTPUT_BYTES] if raw_out else b"").decode("utf-8", errors="replace").strip()
-        err = (raw_err[:MAX_OUTPUT_BYTES] if raw_err else b"").decode("utf-8", errors="replace").strip()
-        return out, err, proc.returncode
     except Exception as e:
         return "", str(e)[:1024], 1
+
+    stdout_chunks = []
+    stderr_chunks = []
+    stdout_len = 0
+    stderr_len = 0
+
+    sel = selectors.DefaultSelector()
+    if proc.stdout:
+        os.set_blocking(proc.stdout.fileno(), False)
+        sel.register(proc.stdout, selectors.EVENT_READ, data='stdout')
+    if proc.stderr:
+        os.set_blocking(proc.stderr.fileno(), False)
+        sel.register(proc.stderr, selectors.EVENT_READ, data='stderr')
+
+    start_time = time.time()
+    timed_out = False
+
+    try:
+        while sel.get_map():
+            remaining = timeout - (time.time() - start_time)
+            if remaining <= 0:
+                timed_out = True
+                break
+            events = sel.select(timeout=min(max(remaining, 0.05), 0.5))
+            for key, _ in events:
+                stream_name = key.data
+                fileobj = key.fileobj
+                try:
+                    data = fileobj.read(4096)
+                except (BlockingIOError, InterruptedError):
+                    continue
+                if not data:
+                    sel.unregister(fileobj)
+                    continue
+
+                if stream_name == 'stdout':
+                    if stdout_len < MAX_OUTPUT_BYTES:
+                        to_take = min(len(data), MAX_OUTPUT_BYTES - stdout_len)
+                        stdout_chunks.append(data[:to_take])
+                        stdout_len += to_take
+                else:
+                    if stderr_len < MAX_OUTPUT_BYTES:
+                        to_take = min(len(data), MAX_OUTPUT_BYTES - stderr_len)
+                        stderr_chunks.append(data[:to_take])
+                        stderr_len += to_take
+    finally:
+        sel.close()
+
+    if timed_out:
+        proc.kill()
+        proc.wait()
+        return "", "Command timed out", 124
+
+    proc.wait()
+
+    out = b"".join(stdout_chunks).decode("utf-8", errors="replace").strip()
+    err = b"".join(stderr_chunks).decode("utf-8", errors="replace").strip()
+    return out, err, proc.returncode
 
 
 def calculate_relative_time(epoch_time):
@@ -194,14 +244,15 @@ def get_status():
 
         # Last commit
         last_commit, _, _ = run_cmd(
-            ["git", "log", "-1", "--format=%h|%ct|%s"],
+            ["git", "log", "-1", "--format=%H|%h|%ct|%s"],
             cwd=DOTFILES_DIR,
         )
         if last_commit:
-            parts = last_commit.split("|", 2)
-            if len(parts) == 3:
-                h, ts, subj = parts
-                status_data["last_commit_hash"] = h
+            parts = last_commit.split("|", 3)
+            if len(parts) == 4:
+                full_h, short_h, ts, subj = parts
+                status_data["last_commit_hash"] = full_h
+                status_data["last_commit_short"] = short_h
                 epoch = int(ts)
                 dt = datetime.fromtimestamp(epoch)
                 status_data["last_backup_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -224,19 +275,20 @@ def get_status():
 
         # History (last 5 commits)
         hist_out, _, _ = run_cmd(
-            ["git", "log", "-5", "--format=%h|%ct|%s"],
+            ["git", "log", "-5", "--format=%H|%h|%ct|%s"],
             cwd=DOTFILES_DIR,
         )
         if hist_out:
             for line in hist_out.split("\n"):
                 if not line.strip():
                     continue
-                parts = line.split("|", 2)
-                if len(parts) == 3:
-                    h, ts, subj = parts
+                parts = line.split("|", 3)
+                if len(parts) == 4:
+                    full_h, short_h, ts, subj = parts
                     ep = int(ts)
                     status_data["history"].append({
-                        "hash": h,
+                        "hash": full_h,
+                        "short_hash": short_h,
                         "relative": calculate_relative_time(ep),
                         "date": datetime.fromtimestamp(ep).strftime("%Y-%m-%d %H:%M"),
                         "subject": subj,
@@ -377,13 +429,15 @@ def restore(pull=True, expected_commit=None, no_pull=False):
 
     # Locate restore script
     restore_script = None
+    rel_script = None
     for candidate in ("install.sh", "restore.sh"):
         p = os.path.join(DOTFILES_DIR, candidate)
         if os.path.exists(p):
             restore_script = p
+            rel_script = candidate
             break
 
-    if not restore_script:
+    if not restore_script or not rel_script:
         return {"success": False, "error": "Neither install.sh nor restore.sh found in ~/dotfiles"}
 
     # Bind and verify executable content
@@ -393,11 +447,6 @@ def restore(pull=True, expected_commit=None, no_pull=False):
     script_stat = os.lstat(restore_script)
     if script_stat.st_uid != os.getuid():
         return {"success": False, "error": f"Restore script {restore_script} is owned by UID {script_stat.st_uid}, not {os.getuid()}"}
-
-    # Verify script is tracked in git repository
-    _, _, code = run_cmd(["git", "ls-files", "--error-unmatch", os.path.basename(restore_script)], cwd=DOTFILES_DIR)
-    if code != 0:
-        return {"success": False, "error": f"Restore script {os.path.basename(restore_script)} is not tracked in git repository"}
 
     pull_note = ""
     if pull and not no_pull:
@@ -411,16 +460,42 @@ def restore(pull=True, expected_commit=None, no_pull=False):
             else:
                 pull_note = " (Pulled latest from GitHub)"
 
-    # Verify current commit
+    # Get verified full 40-character HEAD commit
     current_head, _, _ = run_cmd(["git", "rev-parse", "HEAD"], cwd=DOTFILES_DIR)
-    current_head_short, _, _ = run_cmd(["git", "rev-parse", "--short", "HEAD"], cwd=DOTFILES_DIR)
-    if expected_commit:
-        expected_commit = expected_commit.strip()
-        if not (current_head.startswith(expected_commit) or expected_commit.startswith(current_head_short)):
-            return {
-                "success": False,
-                "error": f"Commit verification failed: target HEAD is {current_head_short}, but expected {expected_commit}. Aborting restore for safety.",
-            }
+    if not re.match(r"^[0-9a-fA-F]{40}$", current_head):
+        return {"success": False, "error": f"Invalid repository HEAD SHA: {current_head}"}
+
+    target_commit = expected_commit.strip() if expected_commit else current_head
+    if not re.match(r"^[0-9a-fA-F]{40}$", target_commit):
+        return {"success": False, "error": f"Confirmed commit must be a full 40-character SHA, got: {target_commit}"}
+
+    if target_commit != current_head:
+        return {
+            "success": False,
+            "error": f"Commit verification failed: target HEAD is {current_head}, but confirmed commit is {target_commit}. Aborting restore for safety.",
+        }
+
+    # Verify script is tracked at this exact commit
+    _, _, code = run_cmd(["git", "ls-files", "--error-unmatch", rel_script], cwd=DOTFILES_DIR)
+    if code != 0:
+        return {"success": False, "error": f"Restore script {rel_script} is not tracked in git repository at {target_commit}"}
+
+    # Verify working copy has no modifications vs target commit
+    _, _, diff_code = run_cmd(["git", "diff", "--quiet", target_commit, "--", rel_script], cwd=DOTFILES_DIR)
+    if diff_code != 0:
+        return {"success": False, "error": f"Executable script {rel_script} has uncommitted modifications vs confirmed commit {target_commit}. Failing closed."}
+
+    # Byte-for-byte verify disk content against committed blob using git object hash
+    disk_blob_hash, _, disk_code = run_cmd(["git", "hash-object", "--", rel_script], cwd=DOTFILES_DIR)
+    if disk_code != 0 or not disk_blob_hash:
+        return {"success": False, "error": f"Failed to compute hash for {rel_script} on disk"}
+
+    commit_blob_hash, _, commit_code = run_cmd(["git", "rev-parse", f"{target_commit}:{rel_script}"], cwd=DOTFILES_DIR)
+    if commit_code != 0 or not commit_blob_hash:
+        return {"success": False, "error": f"Failed to retrieve committed blob hash for {rel_script} at {target_commit}"}
+
+    if disk_blob_hash.strip() != commit_blob_hash.strip():
+        return {"success": False, "error": f"Disk content of {rel_script} ({disk_blob_hash}) does not match committed blob at {target_commit} ({commit_blob_hash}). Failing closed."}
 
     out, err, code = run_cmd([restore_script], cwd=DOTFILES_DIR)
     if code != 0:
@@ -433,7 +508,7 @@ def restore(pull=True, expected_commit=None, no_pull=False):
     # Reload hyprland if available
     run_cmd(["hyprctl", "reload"])
 
-    msg = f"Dotfiles and system configurations restored successfully! (Commit {current_head_short}){pull_note}"
+    msg = f"Dotfiles and system configurations restored successfully! (Commit {target_commit[:7]}){pull_note}"
     run_cmd([
         "notify-send",
         "-i", "document-revert",
@@ -445,7 +520,7 @@ def restore(pull=True, expected_commit=None, no_pull=False):
     return {
         "success": True,
         "message": msg,
-        "commit": current_head_short,
+        "commit": target_commit,
         "output": out,
     }
 

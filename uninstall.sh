@@ -92,37 +92,57 @@ if [ -e "$SHELL_CONFIG" ] || [ -L "$SHELL_CONFIG" ]; then
     echo "==> Backing up $SHELL_CONFIG to $BACKUP..."
     cp "$SHELL_CONFIG" "$BACKUP"
     SHELL_CONFIG="$SHELL_CONFIG" python3 -c "
-import json, os, tempfile
+import json, os, tempfile, sys
 
 config_path = os.environ['SHELL_CONFIG']
 dirname = os.path.dirname(config_path)
-if os.path.islink(config_path):
-    raise RuntimeError('Refusing to modify symlinked shell.json')
+basename = os.path.basename(config_path)
+current_uid = os.getuid()
 
-fd = os.open(config_path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
-with os.fdopen(fd, 'r') as f:
-    cfg = json.load(f)
-
-for section in ('left', 'center', 'right'):
-    widgets = cfg.get('bar', {}).get('layout', {}).get(section, [])
-    cfg['bar']['layout'][section] = [w for w in widgets if w.get('id') != 'arch.backup-manager']
-
-temp_path = None
+dir_fd = os.open(dirname, os.O_RDONLY | os.O_DIRECTORY | getattr(os, 'O_NOFOLLOW', 0))
 try:
-    with tempfile.NamedTemporaryFile('w', dir=dirname, delete=False) as tf:
-        temp_path = tf.name
-        json.dump(cfg, tf, indent=2)
-        tf.flush()
-        os.fsync(tf.fileno())
-    os.chmod(temp_path, 0o644)
-    os.replace(temp_path, config_path)
-    temp_path = None
-finally:
-    if temp_path and os.path.exists(temp_path):
+    dir_stat = os.fstat(dir_fd)
+    if dir_stat.st_uid != current_uid:
+        raise PermissionError(f'Directory {dirname} is owned by UID {dir_stat.st_uid}, not {current_uid}')
+
+    fd = os.open(basename, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0), dir_fd=dir_fd)
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != current_uid:
+            raise PermissionError(f'File {basename} is owned by UID {st.st_uid}, not {current_uid}')
+        orig_mode = st.st_mode & 0o777
+        with os.fdopen(fd, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+    except Exception:
         try:
-            os.unlink(temp_path)
+            os.close(fd)
         except OSError:
             pass
+        raise
+
+    for section in ('left', 'center', 'right'):
+        widgets = cfg.get('bar', {}).get('layout', {}).get(section, [])
+        cfg['bar']['layout'][section] = [w for w in widgets if w.get('id') != 'arch.backup-manager']
+
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix=f'.{basename}-', suffix='.tmp', dir=dirname)
+    tmp_base = os.path.basename(tmp_path)
+    try:
+        with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=2)
+            f.write('\n')
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_path, orig_mode)
+        os.replace(tmp_base, basename, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        tmp_path = None
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+finally:
+    os.close(dir_fd)
 "
     echo "✓ Removed arch.backup-manager from shell.json"
   fi
