@@ -15,7 +15,7 @@ A lightweight, low-profile [Omarchy](https://omarchy.org/) status bar plugin and
   - Detailed tooltip displaying last backup time, latest commit hash, schedule, and destination.
 - **Interactive Management Panel**:
   - **1-Click "Backup Now"**: Immediate backup and push with live progress animation.
-  - **1-Click "Restore"**: One-button system restore pulling the latest configurations from GitHub and updating local configs, theme, and Hyprland without breaking development links. Includes confirmation prompt for safety.
+  - **1-Click "Restore"**: One-button system restore applying dotfiles configurations and updating local configs, theme, and Hyprland without breaking development links. Cryptographically bound to an explicit commit SHA with confirmation prompt for safety.
   - **Schedule Settings**: Change automated backup interval anytime via dropdown (`Every 1 hour`, `2 hours`, `4 hours`, `6 hours`, `12 hours`, `Daily`, or `Disabled`). Dynamically reconfigures systemd user timers.
   - **Target Git Destination**: View and update the GitHub / Git remote target URL and branch directly in the GUI.
   - **Recent Commit History**: Inspect recent backup commits with relative timestamps.
@@ -77,10 +77,11 @@ omarchy-backup-ctl backup-now
 # Or wait for completion:
 omarchy-backup-ctl backup-now --wait
 
-# 1-Button Restore: pull latest dotfiles from GitHub & apply system configurations
-omarchy-backup-ctl restore
-# Or restore without git pull:
-omarchy-backup-ctl restore --no-pull
+# Restore dotfiles bound to an exact, cryptographically verified commit
+omarchy-backup-ctl restore --commit <COMMIT_HASH>
+# Or restore confirmed local HEAD:
+omarchy-backup-ctl restore --head
+# (Specifying the target commit binds the restore decision to that exact, cryptographically verified commit, verifying working tree cleanliness and matching committed blob before execution)
 
 # Change automated backup schedule
 omarchy-backup-ctl set-frequency 4h     # 1h, 2h, 4h, 6h, 12h, daily, disabled

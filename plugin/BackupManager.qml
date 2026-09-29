@@ -99,11 +99,8 @@ BarWidget {
     root.confirmRestoreOpen = false
     root.isRestoring = true
     root.notificationMessage = "Restoring dotfiles from repository…"
-    if (root.lastCommitHash) {
-      restoreProc.command = [root.ctlPath, "restore", "--confirm-commit", root.lastCommitHash]
-    } else {
-      restoreProc.command = [root.ctlPath, "restore", "--no-pull"]
-    }
+    var targetCommit = (root.lastCommitHash && root.lastCommitHash.length > 0) ? root.lastCommitHash : "HEAD"
+    restoreProc.command = [root.ctlPath, "restore", "--confirm-commit", targetCommit]
     if (!restoreProc.running) {
       restoreProc.running = true
     }
@@ -351,7 +348,7 @@ BarWidget {
   // Process 7: 1-Button Restore action
   Process {
     id: restoreProc
-    command: [root.ctlPath, "restore"]
+    command: [root.ctlPath, "restore", "--confirm-commit", "HEAD"]
     running: false
     stdout: StdioCollector {
       waitForEnd: true

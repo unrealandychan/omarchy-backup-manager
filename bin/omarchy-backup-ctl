@@ -422,7 +422,17 @@ def backup_now(wait=False):
         }
 
 
-def restore(pull=True, expected_commit=None, no_pull=False):
+def restore(commit=None, expected_commit=None, **kwargs):
+    target_spec = commit or expected_commit
+    if target_spec in ("--head", "--local", "head", "local"):
+        target_spec = "HEAD"
+
+    if not target_spec:
+        return {
+            "success": False,
+            "error": "Explicit commit required: specify --commit <COMMIT_SHA> (or --head to confirm local HEAD) to bind restore to an exact verified commit.",
+        }
+
     if not os.path.isdir(DOTFILES_DIR):
         return {"success": False, "error": f"Dotfiles directory {DOTFILES_DIR} not found"}
 
@@ -432,6 +442,35 @@ def restore(pull=True, expected_commit=None, no_pull=False):
     dir_stat = os.stat(DOTFILES_DIR)
     if dir_stat.st_uid != os.getuid():
         return {"success": False, "error": f"Dotfiles directory {DOTFILES_DIR} is owned by UID {dir_stat.st_uid}, not {os.getuid()}"}
+
+    # Resolve target commit using git rev-parse --verify
+    commit_input = target_spec.strip()
+    if not re.match(r"^[0-9a-zA-Z._~^/@-]+$", commit_input):
+        return {"success": False, "error": f"Invalid git commit reference format: {commit_input}"}
+
+    target_commit, rev_err, rev_code = run_cmd(
+        ["git", "rev-parse", "--verify", f"{commit_input}^{{commit}}"],
+        cwd=DOTFILES_DIR
+    )
+    if rev_code != 0 or not re.match(r"^[0-9a-fA-F]{40}$", target_commit):
+        return {"success": False, "error": f"Cannot resolve commit '{commit_input}': {rev_err or 'unknown commit'}"}
+
+    # Verify working tree cleanliness
+    _, _, diff_all = run_cmd(["git", "diff", "--quiet", "HEAD"], cwd=DOTFILES_DIR)
+    if diff_all != 0:
+        return {
+            "success": False,
+            "error": f"Cannot restore to commit {target_commit[:7]}: working directory has uncommitted changes. Stash or commit them first.",
+        }
+
+    # Get current HEAD
+    current_head, _, _ = run_cmd(["git", "rev-parse", "HEAD"], cwd=DOTFILES_DIR)
+
+    # Checkout commit if needed
+    if target_commit != current_head:
+        _, _, co_code = run_cmd(["git", "checkout", "--detach", target_commit], cwd=DOTFILES_DIR)
+        if co_code != 0:
+            return {"success": False, "error": f"Failed to checkout commit {target_commit[:7]}"}
 
     # Locate restore script
     restore_script = None
@@ -453,46 +492,6 @@ def restore(pull=True, expected_commit=None, no_pull=False):
     script_stat = os.lstat(restore_script)
     if script_stat.st_uid != os.getuid():
         return {"success": False, "error": f"Restore script {restore_script} is owned by UID {script_stat.st_uid}, not {os.getuid()}"}
-
-    pull_note = ""
-    # Only pull if explicit or if pull=True and no specific expected_commit was supplied
-    if pull and not no_pull and not expected_commit:
-        remote, _, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=DOTFILES_DIR)
-        if remote:
-            branch, _, _ = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=DOTFILES_DIR)
-            branch = branch or "main"
-            p_out, p_err, p_code = run_cmd(["git", "pull", "--rebase", "--autostash", "origin", branch], cwd=DOTFILES_DIR)
-            if p_code != 0:
-                pull_note = f" (Warning: git pull failed: {p_err or p_out})"
-            else:
-                pull_note = " (Pulled latest from GitHub)"
-
-    # Resolve target commit using git rev-parse --verify
-    commit_input = (expected_commit or "HEAD").strip()
-    if not re.match(r"^[0-9a-zA-Z._~^/@-]+$", commit_input):
-        return {"success": False, "error": f"Invalid git commit reference format: {commit_input}"}
-
-    target_commit, rev_err, rev_code = run_cmd(
-        ["git", "rev-parse", "--verify", f"{commit_input}^{{commit}}"],
-        cwd=DOTFILES_DIR
-    )
-    if rev_code != 0 or not re.match(r"^[0-9a-fA-F]{40}$", target_commit):
-        return {"success": False, "error": f"Cannot resolve commit '{commit_input}': {rev_err or 'unknown commit'}"}
-
-    # Get current HEAD
-    current_head, _, _ = run_cmd(["git", "rev-parse", "HEAD"], cwd=DOTFILES_DIR)
-
-    # If the user requested a specific commit other than current HEAD:
-    if target_commit != current_head:
-        _, _, diff_all = run_cmd(["git", "diff", "--quiet", "HEAD"], cwd=DOTFILES_DIR)
-        if diff_all != 0:
-            return {
-                "success": False,
-                "error": f"Cannot restore to commit {target_commit[:7]}: working directory has uncommitted changes. Stash or commit them first.",
-            }
-        _, _, co_code = run_cmd(["git", "checkout", "--detach", target_commit], cwd=DOTFILES_DIR)
-        if co_code != 0:
-            return {"success": False, "error": f"Failed to checkout commit {target_commit[:7]}"}
 
     # Verify script is tracked at this exact commit
     _, _, code = run_cmd(["git", "ls-files", "--error-unmatch", rel_script], cwd=DOTFILES_DIR)
@@ -527,7 +526,7 @@ def restore(pull=True, expected_commit=None, no_pull=False):
     # Reload hyprland if available
     run_cmd(["hyprctl", "reload"])
 
-    msg = f"Dotfiles and system configurations restored successfully! (Commit {target_commit[:7]}){pull_note}"
+    msg = f"Dotfiles and system configurations restored successfully! (Commit {target_commit[:7]})"
     run_cmd([
         "notify-send",
         "-i", "document-revert",
@@ -564,14 +563,17 @@ def main():
         res = backup_now(wait=wait)
         print(json.dumps(res, indent=2))
     elif cmd in ("restore", "--restore"):
-        no_pull = "--no-pull" in args
-        pull = not no_pull
-        expected_commit = None
+        commit = None
+        if "--head" in args or "--local" in args:
+            commit = "HEAD"
         for i, a in enumerate(args):
             if a in ("--commit", "--confirm-commit") and i + 1 < len(args):
-                expected_commit = args[i + 1]
+                commit = args[i + 1]
                 break
-        res = restore(pull=pull, expected_commit=expected_commit, no_pull=no_pull)
+            elif a.startswith("--commit=") or a.startswith("--confirm-commit="):
+                commit = a.split("=", 1)[1]
+                break
+        res = restore(commit=commit)
         print(json.dumps(res, indent=2))
     elif cmd in ("set-frequency", "--set-frequency"):
         if len(args) < 2:
@@ -603,7 +605,7 @@ def main():
 Commands:
   status                 Print current backup status, timer state, and git metadata (JSON)
   backup-now [--wait]    Trigger an immediate backup (asynchronous by default, or wait)
-  restore [--no-pull]    1-button restore: pull latest dotfiles & apply system configurations
+  restore --commit <SHA> | --head      Restore dotfiles at verified commit (--head for local HEAD)
   set-frequency <FREQ>   Set automated backup frequency: 1h, 2h, 4h, 6h, 12h, daily, disabled
   set-remote <URL>       Update Git remote target URL
   set-branch <BRANCH>    Update Git branch

@@ -80,12 +80,20 @@ print(f'{(t1 - t0)*1000:.1f}ms')
 echo "PASS (${TIME_OUT})"
 
 # Test 7: Restore command
-echo -n "[Test 7] Testing 1-button 'restore --no-pull'... "
-RESTORE_JSON="$("$CTL" restore --no-pull)"
+echo -n "[Test 7] Testing 1-button 'restore --confirm-commit HEAD'... "
+# Verify invocation without explicit commit fails closed
+NO_COMMIT_JSON="$("$CTL" restore)"
+echo "$NO_COMMIT_JSON" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+assert data.get('success') is False, 'restore without commit should fail'
+assert 'Explicit commit required' in data.get('error', ''), f'unexpected error message: {data.get(\"error\")}'
+"
+RESTORE_JSON="$("$CTL" restore --confirm-commit HEAD)"
 echo "$RESTORE_JSON" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-assert data.get('success') is True, 'restore command failed'
+assert data.get('success') is True, f'restore command failed: {data.get(\"error\")}'
 assert 'Dotfiles and system configurations restored' in data.get('message', ''), 'unexpected message'
 "
 echo "PASS"
