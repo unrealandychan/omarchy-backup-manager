@@ -38,6 +38,50 @@ CALENDAR_TO_FREQ = {
 }
 
 
+def write_file_safely(filepath, content, mode=0o644):
+    """
+    Safely and atomically writes content to filepath without following planted symlinks.
+    """
+    dirname = os.path.dirname(filepath)
+    if not os.path.exists(dirname):
+        os.makedirs(dirname, mode=0o700, exist_ok=True)
+
+    if os.path.islink(dirname):
+        raise RuntimeError(f"Refusing to write through symlinked directory: {dirname}")
+
+    dir_stat = os.stat(dirname)
+    current_uid = os.getuid()
+    if dir_stat.st_uid != current_uid:
+        raise PermissionError(f"Directory {dirname} is owned by UID {dir_stat.st_uid}, not {current_uid}")
+
+    # If the destination exists or is a symlink, verify ownership and remove symlinks
+    if os.path.lexists(filepath):
+        st = os.lstat(filepath)
+        if st.st_uid != current_uid:
+            raise PermissionError(f"File {filepath} is owned by UID {st.st_uid}, not {current_uid}")
+        if os.path.islink(filepath):
+            os.unlink(filepath)
+
+    temp_path = None
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", dir=dirname, delete=False) as tf:
+            temp_path = tf.name
+            tf.write(content)
+            tf.flush()
+            os.fsync(tf.fileno())
+
+        os.chmod(temp_path, mode)
+        os.replace(temp_path, filepath)
+        temp_path = None
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
 def run_cmd(args, cwd=None, check=False):
     try:
         res = subprocess.run(
@@ -239,14 +283,18 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 """
-    os.makedirs(USER_SYSTEMD_DIR, exist_ok=True)
-    with open(TIMER_FILE, "w") as f:
-        f.write(timer_content)
+    try:
+        write_file_safely(TIMER_FILE, timer_content)
 
-    # Sync to dotfiles repo as well
-    if os.path.isdir(os.path.dirname(DOTFILES_TIMER_FILE)):
-        with open(DOTFILES_TIMER_FILE, "w") as f:
-            f.write(timer_content)
+        # Sync to dotfiles repo as well
+        dotfiles_dir = os.path.dirname(DOTFILES_TIMER_FILE)
+        if os.path.isdir(dotfiles_dir) and not os.path.islink(dotfiles_dir):
+            write_file_safely(DOTFILES_TIMER_FILE, timer_content)
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to safely write systemd timer: {e}",
+        }
 
     run_cmd(["systemctl", "--user", "daemon-reload"])
     run_cmd(["systemctl", "--user", "enable", "--now", TIMER_UNIT])
