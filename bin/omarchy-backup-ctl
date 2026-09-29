@@ -515,7 +515,7 @@ def restore(commit=None, expected_commit=None, **kwargs):
     if disk_blob_hash.strip() != commit_blob_hash.strip():
         return {"success": False, "error": f"Disk content of {rel_script} ({disk_blob_hash}) does not match committed blob at {target_commit} ({commit_blob_hash}). Failing closed."}
 
-    out, err, code = run_cmd([restore_script], cwd=DOTFILES_DIR)
+    out, err, code = run_cmd([restore_script], cwd=DOTFILES_DIR, timeout=60)
     if code != 0:
         return {
             "success": False,

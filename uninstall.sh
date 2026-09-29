@@ -59,6 +59,8 @@ fi
 
 # 2. Safely remove Quickshell plugin link
 check_ownership "$PLUGIN_DEST"
+THIS_INSTALLATION_OWNS_PLUGIN=0
+
 if [ -L "$PLUGIN_DEST" ]; then
   CANONICAL_DEST="$(realpath "$PLUGIN_DEST" 2>/dev/null || true)"
   DEST_TARGET="$(readlink "$PLUGIN_DEST" 2>/dev/null || true)"
@@ -68,6 +70,7 @@ if [ -L "$PLUGIN_DEST" ]; then
      [ "$DEST_TARGET_CANONICAL" = "$SCRIPT_DIR" ] || [ "$DEST_TARGET_CANONICAL" = "$CANONICAL_SRC" ]; then
     rm -f "$PLUGIN_DEST"
     echo "✓ Removed plugin symlink at $PLUGIN_DEST"
+    THIS_INSTALLATION_OWNS_PLUGIN=1
   else
     echo "==> Plugin symlink at $PLUGIN_DEST points to $DEST_TARGET (not this checkout $SCRIPT_DIR); leaving intact."
   fi
@@ -75,13 +78,17 @@ elif [ -d "$PLUGIN_DEST" ]; then
   CANONICAL_DEST="$(cd "$PLUGIN_DEST" && pwd -P)"
   if [ "$CANONICAL_DEST" = "$SCRIPT_DIR" ] || [ "$CANONICAL_DEST" = "$CANONICAL_SRC" ]; then
     echo "==> Current working directory is $PLUGIN_DEST; keeping checkout intact."
+    THIS_INSTALLATION_OWNS_PLUGIN=1
   else
     echo "==> Destination is a standalone directory; keeping $PLUGIN_DEST intact."
   fi
+else
+  THIS_INSTALLATION_OWNS_PLUGIN=1
 fi
 
 # 3. Safely update shell.json
-if [ -e "$SHELL_CONFIG" ] || [ -L "$SHELL_CONFIG" ]; then
+if [ "$THIS_INSTALLATION_OWNS_PLUGIN" -eq 1 ]; then
+  if [ -e "$SHELL_CONFIG" ] || [ -L "$SHELL_CONFIG" ]; then
   check_ownership "$SHELL_CONFIG"
   if [ -L "$SHELL_CONFIG" ]; then
     echo "Error: $SHELL_CONFIG is a symlink. Refusing to modify." >&2
@@ -148,8 +155,11 @@ finally:
   fi
 fi
 
-if command -v omarchy-shell >/dev/null 2>&1; then
-  omarchy-shell shell rescanPlugins 2>/dev/null || true
+  if command -v omarchy-shell >/dev/null 2>&1; then
+    omarchy-shell shell rescanPlugins 2>/dev/null || true
+  fi
+else
+  echo "==> Active plugin at $PLUGIN_DEST is not owned by this checkout; leaving shell.json intact."
 fi
 
 echo "✓ Uninstalled Omarchy Backup Manager."
