@@ -145,12 +145,18 @@ def run_cmd(args, cwd=None, check=False, timeout=15):
     finally:
         sel.close()
 
-    if timed_out:
+    remaining_wait = timeout - (time.time() - start_time)
+    if remaining_wait <= 0 or timed_out:
         proc.kill()
         proc.wait()
         return "", "Command timed out", 124
 
-    proc.wait()
+    try:
+        proc.wait(timeout=max(remaining_wait, 0.01))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return "", "Command timed out", 124
 
     out = b"".join(stdout_chunks).decode("utf-8", errors="replace").strip()
     err = b"".join(stderr_chunks).decode("utf-8", errors="replace").strip()
@@ -449,7 +455,8 @@ def restore(pull=True, expected_commit=None, no_pull=False):
         return {"success": False, "error": f"Restore script {restore_script} is owned by UID {script_stat.st_uid}, not {os.getuid()}"}
 
     pull_note = ""
-    if pull and not no_pull:
+    # Only pull if explicit or if pull=True and no specific expected_commit was supplied
+    if pull and not no_pull and not expected_commit:
         remote, _, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=DOTFILES_DIR)
         if remote:
             branch, _, _ = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=DOTFILES_DIR)
@@ -460,20 +467,32 @@ def restore(pull=True, expected_commit=None, no_pull=False):
             else:
                 pull_note = " (Pulled latest from GitHub)"
 
-    # Get verified full 40-character HEAD commit
+    # Resolve target commit using git rev-parse --verify
+    commit_input = (expected_commit or "HEAD").strip()
+    if not re.match(r"^[0-9a-zA-Z._~^/@-]+$", commit_input):
+        return {"success": False, "error": f"Invalid git commit reference format: {commit_input}"}
+
+    target_commit, rev_err, rev_code = run_cmd(
+        ["git", "rev-parse", "--verify", f"{commit_input}^{{commit}}"],
+        cwd=DOTFILES_DIR
+    )
+    if rev_code != 0 or not re.match(r"^[0-9a-fA-F]{40}$", target_commit):
+        return {"success": False, "error": f"Cannot resolve commit '{commit_input}': {rev_err or 'unknown commit'}"}
+
+    # Get current HEAD
     current_head, _, _ = run_cmd(["git", "rev-parse", "HEAD"], cwd=DOTFILES_DIR)
-    if not re.match(r"^[0-9a-fA-F]{40}$", current_head):
-        return {"success": False, "error": f"Invalid repository HEAD SHA: {current_head}"}
 
-    target_commit = expected_commit.strip() if expected_commit else current_head
-    if not re.match(r"^[0-9a-fA-F]{40}$", target_commit):
-        return {"success": False, "error": f"Confirmed commit must be a full 40-character SHA, got: {target_commit}"}
-
+    # If the user requested a specific commit other than current HEAD:
     if target_commit != current_head:
-        return {
-            "success": False,
-            "error": f"Commit verification failed: target HEAD is {current_head}, but confirmed commit is {target_commit}. Aborting restore for safety.",
-        }
+        _, _, diff_all = run_cmd(["git", "diff", "--quiet", "HEAD"], cwd=DOTFILES_DIR)
+        if diff_all != 0:
+            return {
+                "success": False,
+                "error": f"Cannot restore to commit {target_commit[:7]}: working directory has uncommitted changes. Stash or commit them first.",
+            }
+        _, _, co_code = run_cmd(["git", "checkout", "--detach", target_commit], cwd=DOTFILES_DIR)
+        if co_code != 0:
+            return {"success": False, "error": f"Failed to checkout commit {target_commit[:7]}"}
 
     # Verify script is tracked at this exact commit
     _, _, code = run_cmd(["git", "ls-files", "--error-unmatch", rel_script], cwd=DOTFILES_DIR)

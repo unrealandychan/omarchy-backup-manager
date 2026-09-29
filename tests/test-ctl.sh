@@ -90,6 +90,16 @@ assert 'Dotfiles and system configurations restored' in data.get('message', ''),
 "
 echo "PASS"
 
+# Test 8: Subprocess timeout on closed pipes
+echo -n "[Test 8] Testing subprocess deadline enforcement after pipe close... "
+python3 -c "
+from importlib.machinery import SourceFileLoader
+ctl = SourceFileLoader('ctl', '$CTL').load_module()
+out, err, code = ctl.run_cmd(['python3', '-c', 'import sys, time; sys.stdout.close(); sys.stderr.close(); time.sleep(10)'], timeout=1)
+assert code == 124, f'Expected 124, got {code}'
+"
+echo "PASS"
+
 echo "=========================================="
 echo "All CLI backend tests PASSED!"
 echo "=========================================="
