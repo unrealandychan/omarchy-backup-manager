@@ -46,14 +46,8 @@ A lightweight, low-profile [Omarchy](https://omarchy.org/) status bar plugin and
 omarchy plugin add https://github.com/unrealandychan/omarchy-backup-manager.git --enable
 ```
 
-### Manual Installation via Git:
-```bash
-git clone https://github.com/unrealandychan/omarchy-backup-manager.git ~/.local/share/omarchy/plugins/omarchy-backup-manager
-cd ~/.local/share/omarchy/plugins/omarchy-backup-manager
-./install.sh
-```
-
-Or from any local directory:
+### Local Development / Manual Setup:
+From a local checkout of the repository:
 ```bash
 ./install.sh
 ```
@@ -63,6 +57,32 @@ This will:
 2. Link the plugin to `~/.config/omarchy/plugins/arch.backup-manager`.
 3. Register the widget in `~/.config/omarchy/shell.json` on the navigation bar.
 4. Notify Omarchy Shell to reload plugins automatically.
+
+---
+
+## 🔒 Installer & Runtime Scope
+
+`install.sh`, `uninstall.sh`, and `bin/omarchy-backup-ctl` run entirely as your local user account, without root access, privilege escalation, package managers, or network download scripts.
+
+### Installer (`install.sh` / `uninstall.sh`)
+
+`install.sh` touches only these user-owned paths (verifying current-user UID ownership and refusing symlinks on `shell.json`):
+
+| Path | Change |
+|---|---|
+| `~/.local/bin/omarchy-backup-ctl` | Symlink to `bin/omarchy-backup-ctl` in this checkout; any differing existing file or link is backed up to `*.bak.<timestamp>` first |
+| `~/.config/omarchy/plugins/arch.backup-manager` | Symlink to this checkout; any differing existing directory or file is backed up to `*.bak.<timestamp>` first |
+| `~/.config/omarchy/shell.json` | Backed up to `*.bak.<timestamp>`, then `{"id": "arch.backup-manager"}` is inserted into `bar.layout.right` via `O_NOFOLLOW` atomic replacement |
+
+It then runs `omarchy-shell shell rescanPlugins` if `omarchy-shell` is available on `PATH`.
+
+`uninstall.sh` verifies ownership and provenance before removing anything: it unlinks `~/.local/bin/omarchy-backup-ctl` and `~/.config/omarchy/plugins/arch.backup-manager` only when they resolve to this checkout, and removes `arch.backup-manager` from `~/.config/omarchy/shell.json` (after creating a timestamped backup) only when this checkout owns the active plugin link.
+
+### Runtime (`bin/omarchy-backup-ctl` & `plugin/BackupManager.qml`)
+
+- **User service & timer management**: Inspects and manages only the user-level `omarchy-dotfiles-backup.timer` and `omarchy-dotfiles-backup.service` units, plus `journalctl --user -u omarchy-dotfiles-backup.service` for log viewing. When changing the schedule (`set-frequency`), it atomically writes `~/.config/systemd/user/omarchy-dotfiles-backup.timer` (and mirrors to `~/dotfiles/.config/systemd/user/omarchy-dotfiles-backup.timer` if that directory exists and is owned by the current user) without following symlinks.
+- **Dotfiles repository (`~/dotfiles`)**: Runs `git` commands (`status`, `rev-parse`, `log`, `remote`) with `cwd=~/dotfiles`. Remote URL updates validate safe schemes (`https://`, `ssh://`, `git@host:path`) and reject option-injection strings (`-`) and `ext::` helpers.
+- **Commit-bound restore**: `omarchy-backup-ctl restore --commit <40-hex-sha>` verifies that `~/dotfiles` has a clean tracked working tree, matches `HEAD` to the confirmed 40-character SHA, verifies `restore.sh` against the committed git blob (`git cat-file -e`), and executes `~/dotfiles/restore.sh` strictly from the verified checkout.
 
 ---
 
