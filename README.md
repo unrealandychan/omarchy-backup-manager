@@ -3,6 +3,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Arch Linux / Omarchy](https://img.shields.io/badge/Platform-Arch%20Linux%20%7C%20Omarchy-1793D1.svg)](https://omarchy.org/)
 
+![Omarchy Backup Manager Preview](preview.png)
+
 A lightweight, low-profile [Omarchy](https://omarchy.org/) status bar plugin and management suite for automated dotfiles backup, 1-click system restore, git synchronization, and system configuration snapshots.
 
 ---

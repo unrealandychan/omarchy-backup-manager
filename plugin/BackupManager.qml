@@ -19,6 +19,7 @@ BarWidget {
   property string lastBackupTime: "Checking..."
   property string lastBackupRelative: "..."
   property string lastCommitHash: ""
+  property string lastCommitShort: ""
   property string lastCommitSubject: ""
   property bool timerActive: true
   property string frequency: "4h"
@@ -185,7 +186,7 @@ BarWidget {
     }
     t += "Last Backup: " + root.lastBackupTime + " (" + root.lastBackupRelative + ")\n"
     if (root.lastCommitHash) {
-      t += "Commit: " + root.lastCommitHash + " — " + root.lastCommitSubject + "\n"
+      t += "Commit: " + (root.lastCommitShort || root.lastCommitHash) + " — " + root.lastCommitSubject + "\n"
     }
     t += "Schedule: " + root.frequencyLabel + "\n"
     if (root.nextTrigger) {
@@ -233,6 +234,7 @@ BarWidget {
           root.lastBackupTime = data.last_backup_time || "Never"
           root.lastBackupRelative = data.last_backup_relative || "Never"
           root.lastCommitHash = data.last_commit_hash || ""
+          root.lastCommitShort = data.last_commit_short || (root.lastCommitHash ? root.lastCommitHash.slice(0, 7) : "")
           root.lastCommitSubject = data.last_commit_subject || ""
           root.timerActive = data.timer_active === true
           root.frequency = data.frequency || "4h"
@@ -241,6 +243,12 @@ BarWidget {
           root.remoteUrl = data.remote_url || ""
           root.remoteDisplay = data.remote_display || ""
           root.branch = data.branch || "main"
+          if (!remoteInput.activeFocus) {
+            remoteInput.text = root.remoteUrl
+          }
+          if (!branchInput.activeFocus) {
+            branchInput.text = root.branch
+          }
           root.uncommittedChanges = data.uncommitted_changes || 0
           root.unpushedCommits = data.unpushed_commits || 0
           root.historyList = data.history || []
@@ -412,7 +420,7 @@ BarWidget {
         event.accepted = true
       }
       Keys.onPressed: function(event) {
-        if (event.key === Qt.Key_R) {
+        if (event.key === Qt.Key_R && !remoteInput.activeFocus && !branchInput.activeFocus) {
           root.refreshStatus()
           event.accepted = true
         }
@@ -578,7 +586,7 @@ BarWidget {
                 Layout.alignment: Qt.AlignVCenter
               }
               Text {
-                text: root.lastCommitHash + " · " + root.lastCommitSubject
+                text: (root.lastCommitShort || root.lastCommitHash) + " · " + root.lastCommitSubject
                 textFormat: Text.PlainText
                 color: Color.foreground
                 font.family: Style.font.family
@@ -888,7 +896,7 @@ BarWidget {
                   Layout.fillWidth: true
                   spacing: Style.space(6)
                   Text {
-                    text: modelData.hash || ""
+                    text: modelData.short_hash || (modelData.hash ? modelData.hash.slice(0, 7) : "")
                     textFormat: Text.PlainText
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption
